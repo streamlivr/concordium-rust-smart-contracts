@@ -322,3 +322,213 @@ mod tests {
         claim_eq!(result, Err(ContractError::ContractError));
     }
 }
+
+#[concordium_cfg_test]
+mod chain_tests {
+
+    use super::*;
+    use std::path::PathBuf;
+
+    const INVOKER_ADDR: AccountAddress = AccountAddress([0; 32]);
+    const WEATHER_SERVICE: ContractAddress = ContractAddress {
+        index:    1,
+        subindex: 0,
+    };
+    const ICECREAM_VENDOR: AccountAddress = AccountAddress([1; 32]);
+    const ICECREAM_PRICE: Amount = Amount {
+        micro_ccd: 6000000, // 6 CCD
+    };
+
+    #[derive(Debug)]
+    struct FailedContractInteraction {
+        energy: Energy,
+        error:  ContractErrorType,
+    }
+
+    #[derive(Debug)]
+    enum ContractErrorType {
+        Binary(Vec<u8>),
+        Typed, // TODO
+    }
+
+    struct Event(String);
+
+    enum HostEvent {
+        Interrupted(ContractAddress),
+        Resumed(ContractAddress),
+    }
+
+    struct SuccessfulContractUpdate {
+        events:                 Vec<Event>,
+        interrupts_and_resumes: Vec<HostEvent>,
+        transfers:              Vec<(AccountAddress, Amount)>,
+        energy:                 Energy,
+    }
+
+    struct SuccessfulContractInit {
+        contract_address: ContractAddress,
+        events:           Vec<Event>,
+        energy:           Energy,
+    }
+
+    struct Policies;
+
+    struct Chain {
+        slot_time: Option<SlotTime>,
+    }
+
+    #[derive(Debug)]
+    struct Energy {
+        energy: u64,
+    }
+
+    enum ContractParameter<P: Serialize> {
+        Empty,
+        Typed(P),
+        Binary {
+            parameter: PathBuf,
+        },
+        JSON {
+            parameter: PathBuf,
+            // Will try to use embedded schema if this is `None`.
+            schema:    Option<PathBuf>,
+        },
+    }
+
+    impl Chain {
+        fn empty() -> Self {
+            Self {
+                slot_time: None,
+            }
+        }
+
+        fn new(slot_time: SlotTime) -> Self {
+            Self {
+                slot_time: Some(slot_time),
+            }
+        }
+
+        fn contract_init<P: Serialize>(
+            &mut self,
+            _sender: AccountAddress,
+            _code: PathBuf,
+            _contract_name: ContractName,
+            _parameter: ContractParameter<P>,
+            _amount: Amount,
+        ) -> Result<SuccessfulContractInit, FailedContractInteraction> {
+            todo!()
+        }
+
+        /// Should return
+        fn contract_update<P: Serialize>(
+            &mut self,
+            _sender: AccountAddress,
+            _address: ContractAddress,
+            _entrypoint: EntrypointName,
+            _parameter: ContractParameter<P>,
+            _amount: Amount,
+        ) -> Result<SuccessfulContractUpdate, FailedContractInteraction> {
+            todo!()
+        }
+
+        fn contract_invoke<Rv: Deserial, P: Serialize>(
+            &mut self,
+            _sender: AccountAddress,
+            _address: ContractAddress,
+            _entrypoint: EntrypointName,
+            _parameter: ContractParameter<P>,
+            _amount: Amount,
+        ) -> Result<SuccessfulContractUpdate, FailedContractInteraction> {
+            todo!()
+        }
+
+        fn make_account_missing(&mut self, _account: AccountAddress) { todo!() }
+
+        fn create_account(
+            &mut self,
+            _account: AccountAddress,
+            _balance: Amount,
+            _policies: Option<Policies>,
+        ) {
+            todo!()
+        }
+
+        /// Creates a contract address with an index one above the highest
+        /// currently used. Next call to `contract_init` will skip this
+        /// address.
+        fn create_contract_address(&mut self) -> ContractAddress { todo!() }
+
+        fn set_slot_time(&mut self, slot_time: SlotTime) { self.slot_time = Some(slot_time); }
+    }
+
+    fn test_sunny_days() {
+        let mut chain = Chain::empty();
+
+        chain.create_account(INVOKER_ADDR, Amount::from_ccd(10000), None);
+        chain.create_account(ICECREAM_VENDOR, Amount::from_ccd(10000), None);
+
+        let addr_weather = chain
+            .contract_init(
+                INVOKER_ADDR,
+                PathBuf::from("a.wasm.v1"),
+                ContractName::new_unchecked("init_weather"),
+                ContractParameter::Typed(Weather::Sunny),
+                Amount::zero(), // Must be < invoker.balance (TODO + energy cost ?)
+            )
+            .expect("Initializing weahter contract failed")
+            .contract_address;
+
+        let addr_icecream = chain
+            .contract_init(
+                ICECREAM_VENDOR,
+                PathBuf::from("a.wasm.v1"),
+                ContractName::new_unchecked("init_icecream"),
+                ContractParameter::Typed(addr_weather),
+                Amount::zero(),
+            )
+            .expect("Initializing icecream contract failed")
+            .contract_address;
+
+        let res = chain
+            .contract_update(
+                INVOKER_ADDR,
+                addr_icecream,
+                EntrypointName::new_unchecked("buy_icecream"),
+                ContractParameter::Typed(ICECREAM_VENDOR),
+                ICECREAM_PRICE,
+            )
+            .expect("Buying icecream update failed");
+
+        assert_eq!(res.transfers, [(ICECREAM_VENDOR, ICECREAM_PRICE)]);
+    }
+
+    fn test_missing_weather_service() {
+        let mut chain = Chain::empty();
+
+        chain.create_account(INVOKER_ADDR, Amount::from_ccd(10000), None);
+        chain.create_account(ICECREAM_VENDOR, Amount::from_ccd(10000), None);
+
+        let unused_contract_address = chain.create_contract_address();
+
+        let addr_icecream = chain
+            .contract_init(
+                ICECREAM_VENDOR,
+                PathBuf::from("a.wasm.v1"),
+                ContractName::new_unchecked("init_icecream"),
+                ContractParameter::Typed(unused_contract_address),
+                Amount::zero(),
+            )
+            .expect("Initializing icecream contract failed")
+            .contract_address;
+
+        let res = chain.contract_update(
+            INVOKER_ADDR,
+            addr_icecream,
+            EntrypointName::new_unchecked("buy_icecream"),
+            ContractParameter::Typed(ICECREAM_VENDOR),
+            ICECREAM_PRICE,
+        );
+
+        assert!(res.is_err()); // TODO check exact error
+    }
+}
