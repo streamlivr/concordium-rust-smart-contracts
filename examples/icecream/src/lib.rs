@@ -42,7 +42,7 @@ struct State {
     weather_service: ContractAddress,
 }
 
-#[derive(Serialize, SchemaType, Clone, Copy)]
+#[derive(Serialize, SchemaType, Clone, Copy, Debug, PartialEq, Eq)]
 enum Weather {
     Rainy,
     Sunny,
@@ -327,7 +327,7 @@ mod tests {
 mod chain_tests {
 
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     const INVOKER_ADDR: AccountAddress = AccountAddress([0; 32]);
     const WEATHER_SERVICE: ContractAddress = ContractAddress {
@@ -341,58 +341,144 @@ mod chain_tests {
 
     #[derive(Debug)]
     struct FailedContractInteraction {
+        /// Energy spent.
         energy: Energy,
-        error:  ContractErrorType,
+        /// Error returned.
+        error:  AContractError,
+        /// Events emitted before the interaction failed. Events from failed
+        /// updates are not stored on the chain, but can be useful for
+        /// debugging.
+        events: Vec<Event>,
     }
 
     #[derive(Debug)]
-    enum ContractErrorType {
-        Binary(Vec<u8>),
-        Typed, // TODO
+    struct AContractError(Vec<u8>);
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum DeployModuleError {
+        FileNotFound,
+        InvalidModule,
+        InsufficientFunds,
     }
 
+    impl AContractError {
+        fn deserial<T: Deserial>(&self) -> Result<T, ParsingError> { todo!() }
+
+        fn deserial_to_json(&self, schema_file: &Path) -> Result<SerdeJSON, ParsingError> {
+            todo!()
+        }
+    }
+
+    #[derive(PartialEq, Eq, Debug)]
     struct Event(String);
 
-    enum HostEvent {
-        Interrupted(ContractAddress),
-        Resumed(ContractAddress),
+    #[derive(PartialEq, Eq, Debug)]
+    enum ChainEvent {
+        Interrupted {
+            address: ContractAddress,
+            events:  Vec<Event>,
+        },
+        Resumed {
+            address: ContractAddress,
+            success: bool,
+        },
+        Upgraded {
+            address: ContractAddress,
+            from:    ModuleReference,
+            to:      ModuleReference,
+        },
     }
 
     struct SuccessfulContractUpdate {
-        events:                 Vec<Event>,
-        interrupts_and_resumes: Vec<HostEvent>,
-        transfers:              Vec<(AccountAddress, Amount)>,
-        energy:                 Energy,
+        /// Host events that occured. This includes interrupts, resumes, and
+        /// upgrades.
+        host_events:  Vec<ChainEvent>,
+        transfers:    Vec<(AccountAddress, Amount)>,
+        /// Energy used.
+        energy:       Energy,
+        /// The returned value.
+        return_value: ContractReturnValue,
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct SuccessfulModuleDeployment {
+        module_reference: ModuleReference,
+        energy:           Energy,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
     struct SuccessfulContractInit {
+        /// The address of the new instance.
         contract_address: ContractAddress,
+        /// Events produced during initialization.
         events:           Vec<Event>,
+        /// Energy used.
         energy:           Energy,
     }
 
     struct Policies;
 
     struct Chain {
+        /// The slot time viewable inside the smart contracts.
+        /// An error is thrown if this is `None` and the contract tries to
+        /// access it.
         slot_time: Option<SlotTime>,
     }
 
-    #[derive(Debug)]
+    // TODO: Consider creating an enum with Unlimited / Limit(Energy).
+    #[derive(Debug, PartialEq, Eq)]
     struct Energy {
         energy: u64,
     }
 
-    enum ContractParameter<P: Serialize> {
-        Empty,
-        Typed(P),
-        Binary {
-            parameter: PathBuf,
-        },
-        JSON {
-            parameter: PathBuf,
-            // Will try to use embedded schema if this is `None`.
-            schema:    Option<PathBuf>,
-        },
+    struct ContractReturnValue(Vec<u8>);
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ParsingError {
+        /// Thrown by `deserial` on failure.
+        ParsingFailed,
+        /// Could not find schema file.
+        MissingSchemaFile,
+        /// The schema file could not be parsed.
+        InvalidSchemaFile,
+        /// The return value could not be parsed using the provided schema.
+        ParsingToJSONFailed,
+    }
+
+    struct SerdeJSON;
+
+    impl ContractReturnValue {
+        fn deserial<T: Deserial>(&self) -> Result<T, ParsingError> { todo!() }
+
+        // TODO: optional schema
+        fn deserial_to_json(&self, schema_file: &Path) -> Result<SerdeJSON, ParsingError> {
+            todo!()
+        }
+    }
+
+    struct ContractParameter(Vec<u8>);
+
+    enum ParameterError {
+        MissingParameterFile,
+        MissingSchemaFile,
+        InvalidSchema,
+        ParsingFailed,
+    }
+
+    // TODO: Reconsider the API for using schemas, as we need the contract and
+    // entrypoint names for parsing.
+    impl ContractParameter {
+        fn empty() -> Self { Self(Vec::new()) }
+
+        fn from_bytes(bytes: Vec<u8>) -> Self { Self(bytes) }
+
+        // TODO: optional schema
+        fn from_json(parameter_file: &Path, schema_file: &Path) -> Result<Self, ParameterError> {
+            todo!()
+        }
+
+        // TODO: add version with serde json
+        fn from_typed<T: Serial>(parameter: &T) -> Self { Self(to_bytes(parameter)) }
     }
 
     impl Chain {
@@ -408,36 +494,49 @@ mod chain_tests {
             }
         }
 
-        fn contract_init<P: Serialize>(
+        fn module_deploy(
             &mut self,
             _sender: AccountAddress,
             _code: PathBuf,
+        ) -> Result<SuccessfulModuleDeployment, DeployModuleError> {
+            todo!()
+        }
+
+        fn contract_init(
+            &mut self,
+            _sender: AccountAddress,
+            _module: ModuleReference,
             _contract_name: ContractName,
-            _parameter: ContractParameter<P>,
+            _parameter: ContractParameter,
             _amount: Amount,
+            _energy: Option<Energy>, // Defaults to 100000 if `None`.
         ) -> Result<SuccessfulContractInit, FailedContractInteraction> {
             todo!()
         }
 
-        /// Should return
-        fn contract_update<P: Serialize>(
+        /// Can we get the return value here?
+        fn contract_update(
             &mut self,
             _sender: AccountAddress,
             _address: ContractAddress,
             _entrypoint: EntrypointName,
-            _parameter: ContractParameter<P>,
+            _parameter: ContractParameter,
             _amount: Amount,
+            _energy: Option<Energy>, // Defaults to 100000 if `None`.
         ) -> Result<SuccessfulContractUpdate, FailedContractInteraction> {
             todo!()
         }
 
-        fn contract_invoke<Rv: Deserial, P: Serialize>(
+        /// If `None` is provided, address 0 will be used, which will have
+        /// sufficient funds.
+        fn contract_invoke(
             &mut self,
-            _sender: AccountAddress,
+            _sender: Option<AccountAddress>,
             _address: ContractAddress,
             _entrypoint: EntrypointName,
-            _parameter: ContractParameter<P>,
+            _parameter: ContractParameter,
             _amount: Amount,
+            _energy: Option<Energy>, // Defaults to 100000 if `None`.
         ) -> Result<SuccessfulContractUpdate, FailedContractInteraction> {
             todo!()
         }
@@ -467,13 +566,31 @@ mod chain_tests {
         chain.create_account(INVOKER_ADDR, Amount::from_ccd(10000), None);
         chain.create_account(ICECREAM_VENDOR, Amount::from_ccd(10000), None);
 
+        // TODO: Alternative ways of making addresses:
+        //
+        // Builder pattern:
+        // chain.create_account().with_address(INVOKE_ADDR).with_balance(Amount::
+        // from_ccd(10000));
+        //
+        // With default:
+        // chain.create_account(TestAccount {
+        //     balance: Some(Amount::from_ccd(10000)),
+        //     ..Default::default()
+        // });
+
+        let mod_ref = chain
+            .module_deploy(ICECREAM_VENDOR, PathBuf::from("a.wasm.v1"))
+            .expect("Deployment of valid module should succeed.")
+            .module_reference;
+
         let addr_weather = chain
             .contract_init(
-                INVOKER_ADDR,
-                PathBuf::from("a.wasm.v1"),
+                ICECREAM_VENDOR,
+                mod_ref,
                 ContractName::new_unchecked("init_weather"),
-                ContractParameter::Typed(Weather::Sunny),
-                Amount::zero(), // Must be < invoker.balance (TODO + energy cost ?)
+                ContractParameter::from_typed(&Weather::Sunny),
+                Amount::zero(), // Must be <= invoker.balance + energy cost
+                None,
             )
             .expect("Initializing weahter contract failed")
             .contract_address;
@@ -481,10 +598,11 @@ mod chain_tests {
         let addr_icecream = chain
             .contract_init(
                 ICECREAM_VENDOR,
-                PathBuf::from("a.wasm.v1"),
+                mod_ref,
                 ContractName::new_unchecked("init_icecream"),
-                ContractParameter::Typed(addr_weather),
+                ContractParameter::from_typed(&addr_weather),
                 Amount::zero(),
+                None,
             )
             .expect("Initializing icecream contract failed")
             .contract_address;
@@ -494,12 +612,55 @@ mod chain_tests {
                 INVOKER_ADDR,
                 addr_icecream,
                 EntrypointName::new_unchecked("buy_icecream"),
-                ContractParameter::Typed(ICECREAM_VENDOR),
+                ContractParameter::from_typed(&ICECREAM_VENDOR),
                 ICECREAM_PRICE,
+                None,
             )
             .expect("Buying icecream update failed");
+        // TODO: schema needs to know contr and entrypoint, but that is available here.
+        // Add another function or chained function for handling it.
 
         assert_eq!(res.transfers, [(ICECREAM_VENDOR, ICECREAM_PRICE)]);
+        assert_eq!(res.host_events, [ChainEvent::Interrupted {
+            address: addr_icecream,
+            events:  Vec::new(),
+        },])
+    }
+
+    fn test_weather_init_and_invoke() {
+        let mut chain = Chain::empty();
+
+        chain.create_account(ICECREAM_VENDOR, Amount::from_ccd(10000), None);
+
+        let mod_ref = chain
+            .module_deploy(ICECREAM_VENDOR, PathBuf::from("a.wasm.v1"))
+            .expect("Deployment of valid module should succeed.")
+            .module_reference;
+
+        let addr = chain
+            .contract_init(
+                ICECREAM_VENDOR,
+                mod_ref,
+                ContractName::new_unchecked("init_weather"),
+                ContractParameter::from_typed(&Weather::Sunny),
+                Amount::zero(),
+                None,
+            )
+            .expect("Initializing weather contract failed.")
+            .contract_address;
+
+        let res = chain
+            .contract_invoke(
+                None,
+                addr,
+                EntrypointName::new_unchecked("get"),
+                ContractParameter::empty(),
+                Amount::zero(),
+                None,
+            )
+            .expect("Invoking get entrypoint failed");
+        assert_eq!(res.return_value.deserial(), Ok(Weather::Sunny));
+        assert!(res.host_events.is_empty());
     }
 
     fn test_missing_weather_service() {
@@ -510,13 +671,19 @@ mod chain_tests {
 
         let unused_contract_address = chain.create_contract_address();
 
+        let mod_ref = chain
+            .module_deploy(ICECREAM_VENDOR, PathBuf::from("a.wasm.v1"))
+            .expect("Deployment of valid module should succeed.")
+            .module_reference;
+
         let addr_icecream = chain
             .contract_init(
                 ICECREAM_VENDOR,
-                PathBuf::from("a.wasm.v1"),
+                mod_ref,
                 ContractName::new_unchecked("init_icecream"),
-                ContractParameter::Typed(unused_contract_address),
+                ContractParameter::from_typed(&unused_contract_address),
                 Amount::zero(),
+                None,
             )
             .expect("Initializing icecream contract failed")
             .contract_address;
@@ -525,10 +692,14 @@ mod chain_tests {
             INVOKER_ADDR,
             addr_icecream,
             EntrypointName::new_unchecked("buy_icecream"),
-            ContractParameter::Typed(ICECREAM_VENDOR),
+            ContractParameter::from_typed(&ICECREAM_VENDOR),
             ICECREAM_PRICE,
+            None,
         );
 
-        assert!(res.is_err()); // TODO check exact error
+        match res {
+            Ok(_) => fail!("Update returned Ok(), but it should have failed."),
+            Err(e) => assert_eq!(e.error.deserial(), Ok(ContractError::ContractError)),
+        }
     }
 }
