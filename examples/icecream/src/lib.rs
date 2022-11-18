@@ -579,7 +579,7 @@ mod chain_tests {
         // });
 
         let mod_ref = chain
-            .module_deploy(ICECREAM_VENDOR, PathBuf::from("a.wasm.v1"))
+            .module_deploy(ICECREAM_VENDOR, PathBuf::from("a.wasm.v1")) // TODO: calculate energy automatically
             .expect("Deployment of valid module should succeed.")
             .module_reference;
 
@@ -590,7 +590,7 @@ mod chain_tests {
                 ContractName::new_unchecked("init_weather"),
                 ContractParameter::from_typed(&Weather::Sunny),
                 Amount::zero(), // Must be <= invoker.balance + energy cost
-                None,
+                None,           // TODO: always require energy
             )
             .expect("Initializing weahter contract failed")
             .contract_address;
@@ -642,7 +642,7 @@ mod chain_tests {
                 ICECREAM_VENDOR,
                 mod_ref,
                 ContractName::new_unchecked("init_weather"),
-                ContractParameter::from_typed(&Weather::Sunny),
+                ContractParameter::from_typed(&Weather::Sunny), // TODO: no schema support
                 Amount::zero(),
                 None,
             )
@@ -662,7 +662,17 @@ mod chain_tests {
         assert_eq!(res.return_value.deserial(), Ok(Weather::Sunny));
         assert!(res.host_events.is_empty());
     }
-
+    // These tests should live in the SC crate/tests/ as they are integration tests
+    //
+    // There will be two groups of errors: ChainErrors and TestErrors(fx policies
+    // not set)
+    //
+    //
+    // update and update_dry_run instead of invoke
+    // We can also add dry_run versions for deploy and inia.wasm.vt
+    //
+    //
+    // Add chain.get_account and chain.get_contract
     fn test_missing_weather_service() {
         let mut chain = Chain::empty();
 
